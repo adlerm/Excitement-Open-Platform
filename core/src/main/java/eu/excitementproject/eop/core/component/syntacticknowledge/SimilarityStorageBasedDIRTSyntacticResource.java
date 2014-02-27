@@ -9,14 +9,14 @@ import java.util.Collection;
 
 
 import java.util.LinkedList;
-
 import java.util.List;
+import java.util.Set;
 
 import org.apache.commons.lang.exception.ExceptionUtils;
 
 import eu.excitementproject.eop.common.codeannotations.ParserSpecific;
 import eu.excitementproject.eop.common.component.syntacticknowledge.RuleMatch;
-import eu.excitementproject.eop.common.component.syntacticknowledge.SyntacticResource;
+import eu.excitementproject.eop.common.component.syntacticknowledge.RuleWithConfidenceAndDescription;
 import eu.excitementproject.eop.common.component.syntacticknowledge.SyntacticResourceException;
 import eu.excitementproject.eop.common.component.syntacticknowledge.SyntacticRule;
 import eu.excitementproject.eop.common.datastructures.BidirectionalMap;
@@ -49,9 +49,10 @@ import eu.excitementproject.eop.distsim.util.Configuration;
  * @since Aug 28 2013
  *
  */
-public class SimilarityStorageBasedDIRTSyntacticResource implements SyntacticResource<Info, BasicNode> {
+@ParserSpecific({"easyfirst"})
+public class SimilarityStorageBasedDIRTSyntacticResource extends SyntacticResourceSupportDIRTTemplates<Info, BasicNode> {
 
-	
+
 	/**
 	 * Constructs a syntactic resource from configuration params, by constructing a new similarity storage from these params.
 	 * @see DefaultSimilarityStorage#DefaultSimilarityStorage(ConfigurationParams)
@@ -68,7 +69,7 @@ public class SimilarityStorageBasedDIRTSyntacticResource implements SyntacticRes
 				params.getInt(Configuration.TOP_N_RULES)
 		);
 	}
-	
+
 	/**
 	 * Constructs a syntactic resource from an existing, initialized similarity storage, with a rule-count limit.
 	 * 
@@ -92,7 +93,7 @@ public class SimilarityStorageBasedDIRTSyntacticResource implements SyntacticRes
 		this.maxNumOfRetrievedRules = maxNumOfRetrievedRules;
 		this.matchCriteria = new BasicMatchCriteria<Info,Info,BasicNode,BasicNode>();
 	}
-	
+
 	/* (non-Javadoc)
 	 * @see eu.excitementproject.eop.common.component.Component#getComponentName()
 	 */
@@ -112,58 +113,9 @@ public class SimilarityStorageBasedDIRTSyntacticResource implements SyntacticRes
 	@Override
 	@ParserSpecific({"easyfirst"})
 	public List<RuleMatch<Info, BasicNode>> findMatches(BasicNode currentTree) throws SyntacticResourceException {
-		
-		try {
-			
-			//debug
-			//System.out.println("root: " + currentTree.getInfo());
-
-			List<RuleMatch<Info, BasicNode>> ret = new LinkedList<RuleMatch<Info, BasicNode>>();
-			for (String dependencyPath : extractor.stringDependencyPaths(currentTree)) {
-				
-				int pos1 = dependencyPath.indexOf("<");
-				int pos2 = dependencyPath.lastIndexOf(">");
-				StringBasedElement element = new StringBasedElement(dependencyPath.substring(pos1-1,pos2+2));
-				
-				//debug
-				//System.out.println("dp: " + element.toKey());
-				
-				for (ElementsSimilarityMeasure leftSimilarity : 
-						similarityStorage.getSimilarityMeasure(element, RuleDirection.LEFT_TO_RIGHT, FilterType.TOP_N, maxNumOfRetrievedRules)) {
-					
-					//debug
-					//System.out.println("left: " + leftSimilarity.getLeftElement().toKey());
-					//System.out.println("right: " + leftSimilarity.getRightElement().toKey());
-
-					TemplateToTree leftTemplateConverter=new TemplateToTree(leftSimilarity.getLeftElement().toKey(),PARSER.EASYFIRST);
-					leftTemplateConverter.createTree();
-					
-					TemplateToTree rightTemplateConverter=new TemplateToTree(leftSimilarity.getRightElement().toKey(),PARSER.EASYFIRST);
-					rightTemplateConverter.createTree();
-					double score = leftSimilarity.getSimilarityMeasure();
-					
-					SyntacticRule<Info, BasicNode>  rule = ruleFromTemplates(leftTemplateConverter,rightTemplateConverter,score);
-					PathAllEmbeddedMatcher<Info, BasicNode,Info,BasicNode> matcher = 
-							new PathAllEmbeddedMatcher<Info, BasicNode,Info,BasicNode>(matchCriteria);
-					matcher.setTrees(currentTree, leftTemplateConverter.getTree());
-					matcher.findMatches();
-					Collection<? extends BidirectionalMap<BasicNode, BasicNode>> matches = matcher.getMatches();
-					
-					for (BidirectionalMap<BasicNode, BasicNode> match : matches) {
-						
-						//debug
-						//System.out.println("match!");
-
-						ret.add(new RuleMatch<Info, BasicNode>(rule,match));
-					}
-				}
-			}
-			return ret;
-		} catch (Exception e) {
-			throw new SyntacticResourceException(ExceptionUtils.getStackTrace(e));
-		}
+		return findMatches(currentTree,createTemplatesForTree(currentTree));
 	}
-	
+
 	protected SyntacticRule<Info, BasicNode> ruleFromTemplates(TemplateToTree entailing, TemplateToTree entailed, double score) throws TemplateToTreeException
 	{
 		BidirectionalMap<BasicNode, BasicNode> mapLhsRhs = new SimpleBidirectionalMap<BasicNode, BasicNode>();
@@ -176,19 +128,59 @@ public class SimilarityStorageBasedDIRTSyntacticResource implements SyntacticRes
 		{
 			mapLhsRhs.put(entailing.getRightVariableNode(),entailed.getRightVariableNode());
 		}
-		
-		
+
+
 		return new SyntacticRule<Info, BasicNode>(entailing.getTree(), entailed.getTree(), mapLhsRhs);
 	}
 
+
 	@Override
-	public List<RuleMatch<Info, BasicNode>> findMatches(BasicNode textTree, BasicNode hypothesisTree) throws SyntacticResourceException {
-		throw new UnsupportedOperationException();
-	}
+	public List<RuleMatch<Info, BasicNode>> findMatches(BasicNode textTree, Set<String> hypothesisTemplates) throws SyntacticResourceException {
+		try {
+			List<RuleMatch<Info, BasicNode>> ret = new LinkedList<RuleMatch<Info, BasicNode>>();
+			for (String dependencyPath : hypothesisTemplates) {
 	
+				int pos1 = dependencyPath.indexOf("<");
+				int pos2 = dependencyPath.lastIndexOf(">");
+				StringBasedElement element = new StringBasedElement(dependencyPath.substring(pos1-1,pos2+2));
+				for (ElementsSimilarityMeasure leftSimilarity : 
+						similarityStorage.getSimilarityMeasure(element, RuleDirection.LEFT_TO_RIGHT, FilterType.TOP_N, maxNumOfRetrievedRules)) {
+					TemplateToTree leftTemplateConverter=new TemplateToTree(leftSimilarity.getLeftElement().toKey(),PARSER.EASYFIRST);
+					leftTemplateConverter.createTree();
+	
+					TemplateToTree rightTemplateConverter=new TemplateToTree(leftSimilarity.getRightElement().toKey(),PARSER.EASYFIRST);
+					rightTemplateConverter.createTree();
+					double score = leftSimilarity.getSimilarityMeasure();
+	
+					SyntacticRule<Info, BasicNode>  rule = ruleFromTemplates(leftTemplateConverter,rightTemplateConverter,score);
+					PathAllEmbeddedMatcher<Info, BasicNode,Info,BasicNode> matcher = 
+							new PathAllEmbeddedMatcher<Info, BasicNode,Info,BasicNode>(matchCriteria);
+					matcher.setTrees(textTree, leftTemplateConverter.getTree());
+					matcher.findMatches();
+					Collection<? extends BidirectionalMap<BasicNode, BasicNode>> matches = matcher.getMatches();
+	
+					for (BidirectionalMap<BasicNode, BasicNode> match : matches) {
+						ret.add(new RuleMatch<Info, BasicNode>(
+								new RuleWithConfidenceAndDescription<Info, BasicNode>(rule,score,leftSimilarity.getLeftElement().toKey()+" -> "+leftSimilarity.getRightElement().toKey()),
+								match));
+					}
+				}
+			}
+			return ret;
+		} catch (Exception e) {
+			throw new SyntacticResourceException(ExceptionUtils.getStackTrace(e));
+		}
+	}
+
+	@Override
+	protected Set<String> createTemplatesForTree(BasicNode tree) throws SyntacticResourceException
+	{
+		return extractor.stringDependencyPaths(tree);
+	}
+
+
 	SimilarityStorage similarityStorage;
 	DependencyPathsFromTreeBinary<Info, BasicNode> extractor;
 	Integer maxNumOfRetrievedRules;
 	BasicMatchCriteria<Info,Info,BasicNode,BasicNode> matchCriteria;
-
 }

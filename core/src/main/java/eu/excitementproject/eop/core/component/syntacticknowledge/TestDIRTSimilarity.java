@@ -38,7 +38,7 @@ import eu.excitementproject.eop.distsim.util.Pair;
  *
  */
 public class TestDIRTSimilarity {
-	
+
 	public static void main(String[] args) throws SimilarityNotFoundException, LexicalResourceException, UnsupportedPosTagStringException, SyntacticResourceException, SentenceReaderException, ElementTypeException, FileNotFoundException, RedisRunException, eu.excitementproject.eop.common.exception.ConfigurationException {
 
 		if (args.length != 2) {
@@ -47,30 +47,30 @@ public class TestDIRTSimilarity {
 					" <parsed corpus file/dir (xml representation)> ");
 			System.exit(0);
 		}
-		
+
 		//ConfigurationFile confFile = new ConfigurationFile(args[0]);
 		ConfigurationFile confFile = new ConfigurationFile(new ImplCommonConfig(new File(args[0])));
 		ConfigurationParams confParams = confFile.getModuleConfiguration(Configuration.KNOWLEDGE_RESOURCE);
-		
+
 		SyntacticResource<Info, BasicNode> resource = new SimilarityStorageBasedDIRTSyntacticResource(confParams);
-		
+
 		for (File f : FileUtils.getFiles(new File(args[1]))) {
 			FileBasedSentenceReader<BasicNode> reader = new XMLNodeSentenceReader();
 			reader.setSource(f);
 			Pair<BasicNode, Long> tree;
 			while ((tree = reader.nextSentence())!= null) {
-				
+
 				try {
 					List<RuleMatch<Info, BasicNode>> matches = resource.findMatches(tree.getFirst());
-					
+
 					//debug
 					if (matches.size() > 0 ) {
 						System.out.println(matches.size() + " matches were found for tree: " + tree.getFirst().getInfo());					
 						for (RuleMatch<Info, BasicNode> match : matches)
-							System.out.println(match.getRule().getLeftHandSide().getInfo().toString() + "\t" + match.getRule().getRightHandSide().getInfo().toString());
+							System.out.println(match.getRule().getRule().getLeftHandSide().getInfo().toString() + "\t" + match.getRule().getRule().getRightHandSide().getInfo().toString());
 						System.out.println();
 					}
-					
+
 				} catch (Exception e) {
 					e.printStackTrace();
 				}
