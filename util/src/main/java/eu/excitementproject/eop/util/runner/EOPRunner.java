@@ -14,6 +14,8 @@ import org.apache.log4j.Logger;
 import org.apache.uima.jcas.JCas;
 import org.kohsuke.args4j.CmdLineParser;
 
+import eu.excitementproject.eop.alignmentedas.p1eda.visualization.P1EdaVisualizer;
+import eu.excitementproject.eop.alignmentedas.p1eda.visualization.Visualizer;
 import eu.excitementproject.eop.common.EDABasic;
 import eu.excitementproject.eop.common.EDAException;
 import eu.excitementproject.eop.common.TEDecision;
@@ -60,6 +62,7 @@ public class EOPRunner {
 
 	private Logger logger;
 
+	private Visualizer visualizer = null;
 	
 	/**
 	 * @param args
@@ -83,7 +86,7 @@ public class EOPRunner {
 		dih = new EOPRunnerInitializationHelper();
 		
 		logger = Logger.getLogger("eu.excitementproject.eop.util.runner.EOPRunner");
-		
+				
 		if (args.length == 0)
 			showHelp(parser);
 		
@@ -144,6 +147,13 @@ public class EOPRunner {
 	}
 	
 	/**
+	 * Initialize P1EDA's visualizer to enable tracing
+	 */
+	public void initializeVisualizer() {		
+		visualizer = new P1EdaVisualizer();
+	}
+	
+	/**
 	 * Find the value for a given parameter either from the command line arguments or from the configuration file
 	 * 
 	 * @param fileOption -- option value from the command line arguments
@@ -173,7 +183,7 @@ public class EOPRunner {
 			logger.error("Could not create EDA object");
 			e.printStackTrace();
 		} 
-		logger.info("EDA object created from class " + eda.getClass());
+		logger.info("EDA object created from class " + eda.getClass());		
 	}
 	
 	/**
@@ -198,10 +208,15 @@ public class EOPRunner {
 	 * @param outDir -- directory for storing the results in the web-demo-friendly format
 	 */
 	public void runEOPTest(String testDirStr, String outDir) {
-		
-		resultsFile = outDir + "/" + configFile.getName() + "_results.txt";		
-		xmlResultsFile = outDir + "/" + configFile.getName() + "_results.xml";
-		
+
+		if (option.results != null) {
+			resultsFile = option.results;
+			xmlResultsFile = option.results.replaceAll(".txt$", ".xml");
+		} else {
+			resultsFile = outDir + "/" + configFile.getName() + "_results.txt";
+			xmlResultsFile = outDir + "/" + configFile.getName() + "_results.xml";
+		}
+
 		try {
 						
 			File testDir = new File(testDirStr);
@@ -217,9 +232,17 @@ public class EOPRunner {
 				
 				writer.write(OutputUtils.getPairID(cas) + "\t" + OutputUtils.getGoldLabel(cas) + "\t"  + teDecision.getDecision().toString() + "\t" + teDecision.getConfidence() + "\n");
 //				hasGoldLabel = OutputUtils.getGoldLabel(cas);
+				
+				if (visualizer != null) {
+					OutputUtils.makeTraceHTML(teDecision, cas, option.output, visualizer);
+				}
 			}
 			writer.close();
 			out.close();
+
+			// generate the XML results file
+			logger.info("Results file -- XML format: " + xmlResultsFile);
+			OutputUtils.generateXMLResults(option.testFile, resultsFile, xmlResultsFile);
 			
 			logger.info("Results file -- txt format: " + resultsFile);			
 			
@@ -231,6 +254,8 @@ public class EOPRunner {
 			} catch (IOException e) {
 				logger.info("Problem copying the configuration file " + configFile.getName() + " to directory " + outputDir.getName());
 			}
+			
+			
 			// careful with the copying! The model file may have a relative path which must be first resolved!
 
 			logger.info("Copying model in output directory " + outDir);
@@ -249,17 +274,28 @@ public class EOPRunner {
 
 	
 	public void scoreResults() {
-		
+
+		String availableResultsFile = resultsFile;
 		if (option.results != null) {
-			scoreResults(option.results,Paths.get(option.results + "_report.xml"));			
-		} else {
-			if (option.testFile != null && resultsFile != null) {
-				logger.info("Results file -- XML format: " + xmlResultsFile);
-				OutputUtils.generateXMLResults(option.testFile, resultsFile, xmlResultsFile);
-				scoreResults(resultsFile,Paths.get(resultsFile + "_report.xml"));
-			} else {
-				logger.error("Could not score the results -- check that you have provided the correct test file, and that the results file (" + resultsFile + ") was properly generated");
+			availableResultsFile = option.results;
+		}
+		
+		if (availableResultsFile != null) {
+
+			if (xmlResultsFile == null) {
+				xmlResultsFile = availableResultsFile.replaceAll(".txt$", ".xml");
 			}
+
+			scoreResults(availableResultsFile,Paths.get(availableResultsFile + "_report.xml"));			
+
+			if (option.testFile != null) {
+				logger.info("Results file -- XML format: " + xmlResultsFile);
+				OutputUtils.generateXMLResults(option.testFile, availableResultsFile, xmlResultsFile);
+			} else {
+				logger.error("Could not score the results -- the testFile option is missing");
+			} 
+		} else {
+				logger.error("Could not score the results -- check that you have provided the correct test file, and that the results file (" + availableResultsFile + ") was properly generated");
 		}
 		
 	}
@@ -288,6 +324,9 @@ public class EOPRunner {
 			TEDecision te = eda.process(aJCas);
 			logger.info("T/H pair processing result: " + te.getDecision() + " with confidence " + te.getConfidence());
 			OutputUtils.makeSinglePairXML(te, aJCas, option.output, option.language);
+			if (visualizer != null) {
+				OutputUtils.makeTraceHTML(te, aJCas, option.output, visualizer);
+			}
 		} catch (EDAException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -325,6 +364,9 @@ public class EOPRunner {
 			
 			setLanguage();
 			
+			if (option.trace) 
+				initializeVisualizer();
+			
 			if (option.lap != null) 
 				lapRunner = new LAPRunner(option.lap);
 
@@ -335,11 +377,11 @@ public class EOPRunner {
 			if (option.trainFile != null) {
 								
 				String trainFile = getOptionValue(option.trainFile, "trainFile");
-				String trainDir = getOptionValue(option.trainDir, "trainDir");
-				
-				logger.info("\t training file: " + trainFile + "\n\t training dir: " + trainDir);
-				
+								
 				if (! option.nolap) {
+					String trainDir = getOptionValue(option.trainDir, "trainDir");
+					logger.info("\t training file: " + trainFile + "\n\t training dir: " + trainDir);
+
 					lapRunner.runLAPOnFile(trainFile, trainDir);
 				}
 			}
@@ -349,19 +391,21 @@ public class EOPRunner {
 						
 			if (option.testFile != null) {
 				testFile = getOptionValue(option.testFile, "testFile");
-				testDir = getOptionValue(option.testDir, "testDir");
-
-				logger.info("\t testing file: " + testFile + "\n\t testing dir: " + testDir);
 				
-				if (! option.nolap) {
+				if ((! option.nolap) && (option.config != null)) {
+					testDir = getOptionValue(option.testDir, "testDir");
+					logger.info("\t testing file: " + testFile + "\n\t testing dir: " + testDir);
+
 					lapRunner.runLAPOnFile(testFile, testDir);
+				} else {
+					logger.info("Skipping LAP processing (if you think it shouldn't skip, check that the config option was used and the configuration file was given, and that the option \"-nolap\" was not used. \n");
 				}
 			}
 			
 			if (option.test) {
 				
 //				if (! option.train)
-					eda.initialize(config);
+				    eda.initialize(config);
 				
 				testDir = getOptionValue(option.testDir, "testDir");
 				
